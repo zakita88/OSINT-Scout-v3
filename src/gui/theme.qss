@@ -71,3 +71,26 @@ QTabBar::tab:selected {
   background: #12344a;
   color: #e6f2ff;
 }
+
+/* Checkbox */
+QCheckBox {
+    spacing: 5px;
+}
+
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    border: 1px solid #243443;
+    border-radius: 4px;
+    background: #0b1217;
+}
+
+QCheckBox::indicator:hover {
+    border: 1px solid #3b84c2;
+}
+
+QCheckBox::indicator:checked {
+    background: #2b6fa6;
+    border: 1px solid #3b84c2;
+    image: url(none); /* Можно добавить свою иконку галочки */
+}
