@@ -1,0 +1,5 @@
+﻿.venv/
+cache/
+tg_session.session
+__pycache__/
+data/config.json

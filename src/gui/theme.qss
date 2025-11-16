@@ -1,0 +1,73 @@
+/* Basic dark theme — blue/grey accents */
+
+QWidget {
+  background: #0f1720;
+  color: #dfe8ee;
+  font-family: "Segoe UI", Roboto, Arial;
+  font-size: 12px;
+}
+
+/* Card */
+QWidget#card {
+  background: #131921;
+  border-radius: 8px;
+  padding: 8px;
+}
+
+/* Titles */
+QLabel#cardTitle {
+  color: #e6f2ff;
+  font-weight: 700;
+  font-size: 14px;
+}
+QLabel#cardSubtitle {
+  color: #9fb6d3;
+  font-size: 12px;
+}
+QLabel#cardDetails {
+  color: #bcd2e9;
+  font-size: 11px;
+}
+
+/* Buttons */
+QPushButton {
+  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #2b6fa6, stop:1 #1f4a73);
+  color: white;
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+QPushButton:hover {
+  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3b84c2, stop:1 #2b6fa6);
+}
+
+/* Input */
+QLineEdit {
+  background: #0b1217;
+  border: 1px solid #243443;
+  padding: 6px;
+  border-radius: 6px;
+  color: #dfe8ee;
+}
+
+/* Log console */
+QTextEdit#logConsole {
+  background: #081018;
+  border: 1px solid #153040;
+  border-radius: 6px;
+  color: #a8c7e6;
+  font-family: monospace;
+}
+
+/* Tabs */
+QTabWidget::pane { border: none; }
+QTabBar::tab {
+  background: #09121b;
+  color: #9fb6d3;
+  padding: 8px 12px;
+  margin-right: 2px;
+  border-radius: 6px;
+}
+QTabBar::tab:selected {
+  background: #12344a;
+  color: #e6f2ff;
+}
