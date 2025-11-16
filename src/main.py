@@ -3,28 +3,51 @@ import sys
 import asyncio
 from PySide6.QtWidgets import QApplication
 from qasync import QEventLoop
-from gui.main_window import MainWindow
 from pathlib import Path
 from core.http_client import HttpClient
+from core.module_loader import load_modules, shutdown_modules
+from gui.main_window import MainWindow
+
+async def startup():
+    """Асинхронные задачи, которые нужно выполнить перед запуском GUI."""
+    await HttpClient.initialize()
+    await load_modules()
+
+async def cleanup():
+    """Асинхронные задачи для корректного завершения работы."""
+    print("[*] Начало процесса завершения...")
+    await shutdown_modules()
+    await HttpClient.close()
+    print("[*] Все системы выгружены. Выход.")
 
 if __name__ == "__main__":
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
     app = QApplication(sys.argv)
-
-    # применяем QSS-стиль
-    qss_path = Path(__file__).resolve().parent / "gui" / "theme.qss"
-    if qss_path.exists():
-        app.setStyleSheet(qss_path.read_text(encoding="utf-8"))
-
     loop = QEventLoop(app)
     asyncio.set_event_loop(loop)
 
-    main = MainWindow()
-    main.show()
-
+    # Применяем стили
+    qss_path = Path(__file__).resolve().parent / "gui" / "theme.qss"
+    if qss_path.exists():
+        app.setStyleSheet(qss_path.read_text(encoding="utf-8"))
+    
+    main_window = None
     try:
+        # Выполняем асинхронный старт
+        loop.run_until_complete(startup())
+
+        main_window = MainWindow()
+        main_window.show()
+
+        # Запускаем основной цикл каноничным для qasync способом
         with loop:
             loop.run_forever()
+
+    except KeyboardInterrupt:
+        print("\n[*] Приложение закрыто пользователем.")
     finally:
-        # Корректно закрываем сессию перед выходом
         if loop.is_running():
-             loop.run_until_complete(HttpClient.close_session())
+            # Если вышли по ошибке, а цикл еще работает
+            loop.run_until_complete(cleanup())

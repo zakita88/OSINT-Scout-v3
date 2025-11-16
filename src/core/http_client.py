@@ -6,29 +6,38 @@ import certifi
 
 class HttpClient:
     _session: aiohttp.ClientSession | None = None
-    # Лимит VK API - 3 запроса в секунду для большинства методов.
-    # Семафор ограничивает количество ОДНОВРЕМЕННЫХ запросов к VK.
     _vk_semaphore = asyncio.Semaphore(3)
 
     @classmethod
-    def get_session(cls) -> aiohttp.ClientSession:
-        """Возвращает глобальный экземпляр aiohttp.ClientSession."""
-        if cls._session is None or cls._session.closed:
-            # ИСПРАВЛЕНИЕ: Создаем SSL-контекст, который доверяет сертификатам из пакета certifi.
-            # Это решает проблему 'CERTIFICATE_VERIFY_FAILED' в окружениях с антивирусами/прокси.
+    async def initialize(cls):
+        """
+        ИНИЦИАЛИЗИРУЕТ глобальную сессию aiohttp.
+        Этот метод должен быть вызван один раз после запуска event loop.
+        """
+        if cls._session is None:
             ssl_context = ssl.create_default_context(cafile=certifi.where())
             connector = aiohttp.TCPConnector(ssl=ssl_context)
-
-            # Устанавливаем разумный общий таймаут для всех запросов
             timeout = aiohttp.ClientTimeout(total=10)
             cls._session = aiohttp.ClientSession(timeout=timeout, connector=connector)
-        return cls._session
+            print("[*] Сетевая сессия HttpClient инициализирована.")
 
     @classmethod
-    async def close_session(cls):
-        """Закрывает глобальную сессию."""
+    async def close(cls):
+        """ЗАКРЫВАЕТ глобальную сессию."""
         if cls._session and not cls._session.closed:
             await cls._session.close()
+            cls._session = None
+            print("[*] Сетевая сессия HttpClient закрыта.")
+
+    @classmethod
+    def get_session(cls) -> aiohttp.ClientSession:
+        """
+        Возвращает уже инициализированный экземпляр сессии.
+        Вызовет ошибку, если сессия не была инициализирована.
+        """
+        if cls._session is None:
+            raise RuntimeError("HttpClient сессия не была инициализирована. Вызовите HttpClient.initialize() сначала.")
+        return cls._session
 
     @classmethod
     def get_vk_semaphore(cls) -> asyncio.Semaphore:
