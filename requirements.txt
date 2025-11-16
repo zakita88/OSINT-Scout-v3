@@ -1,5 +1,7 @@
+# requirements.txt
 telethon
 requests
 PySide6
 qasync
 aiohttp
+certifi

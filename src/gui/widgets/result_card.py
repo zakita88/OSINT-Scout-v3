@@ -1,12 +1,14 @@
+# src/gui/widgets/result_card.py
+import asyncio
+import os
 from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout, QSizePolicy
 from PySide6.QtGui import QPixmap, QImage
-import requests
-import os
-
+from core.http_client import HttpClient
 
 class ResultCard(QWidget):
     def __init__(self, title, subtitle="", avatar_url=None, details=None):
         super().__init__()
+        self.setObjectName("card") # Для применения стилей из QSS
 
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
@@ -22,60 +24,70 @@ class ResultCard(QWidget):
         # text
         block = QVBoxLayout()
         self.title = QLabel(title)
+        self.title.setObjectName("cardTitle")
+
         self.subtitle = QLabel(subtitle)
+        self.subtitle.setObjectName("cardSubtitle")
+
         block.addWidget(self.title)
         block.addWidget(self.subtitle)
 
         if details:
             for k, v in details.items():
-                block.addWidget(QLabel(f"<b>{k}:</b> {v}"))
+                detail_label = QLabel(f"<b>{k}:</b> {v}")
+                detail_label.setObjectName("cardDetails")
+                detail_label.setWordWrap(True)
+                block.addWidget(detail_label)
+        
+        block.addStretch() # Добавляет растягивающееся пространство вниз
 
         main.addLayout(block)
 
         if avatar_url:
             self.set_avatar(avatar_url)
 
-    # ------------------ АВАТАР ------------------
-
-    def set_avatar(self, src):
-        """Определяет — URL или локальный файл."""
+    def set_avatar(self, src: str):
+        """Определяет, URL это или локальный файл, и запускает загрузку."""
         if isinstance(src, str) and (src.startswith("http://") or src.startswith("https://")):
-            self._load_from_url(src)
+            # Запускаем асинхронную загрузку в фоне, не блокируя GUI
+            asyncio.create_task(self._load_from_url(src))
         else:
             self._load_from_file(src)
 
-    def _load_from_url(self, url):
+    async def _load_from_url(self, url: str):
+        """Асинхронно загружает изображение из сети."""
+        session = HttpClient.get_session()
         try:
-            r = requests.get(url, timeout=6)
-            r.raise_for_status()
-            img = QImage.fromData(r.content)
-            if img.isNull():
-                return
-            self.avatar.setPixmap(QPixmap.fromImage(img).scaled(96, 96))
-        except:
-            pass
+            async with session.get(url) as resp:
+                resp.raise_for_status()
+                content = await resp.read()
+                img = QImage.fromData(content)
+                if not img.isNull():
+                    pixmap = QPixmap.fromImage(img).scaled(96, 96)
+                    self.avatar.setPixmap(pixmap)
+        except Exception as e:
+            print(f"Error loading image from {url}: {e}")
 
-    def _load_from_file(self, path):
+    def _load_from_file(self, path: str):
+        """Загружает изображение из локального файла."""
         try:
-            # корректно ищем абсолютный путь
             if not os.path.isabs(path):
-                base = os.path.abspath(os.getcwd())
-                path = os.path.join(base, path)
+                # cache/tg_user.jpg -> /path/to/project/cache/tg_user.jpg
+                path = os.path.abspath(path)
 
             if not os.path.exists(path):
-                print("FILE NOT FOUND:", path)
+                print(f"FILE NOT FOUND: {path}")
                 return
 
             with open(path, "rb") as f:
-                data = f.read()
-
-            img = QImage.fromData(data)
+                content = f.read()
+            
+            img = QImage.fromData(content)
             if img.isNull():
-                print("IMAGE NULL:", path)
+                print(f"IMAGE NULL: {path}")
                 return
 
-            self.avatar.setPixmap(QPixmap.fromImage(img).scaled(96, 96))
-
+            pixmap = QPixmap.fromImage(img).scaled(96, 96)
+            self.avatar.setPixmap(pixmap)
         except Exception as e:
-            print("LOAD ERROR:", e)
-            return
+            print(f"LOAD ERROR: {path}, {e}")
