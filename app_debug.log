@@ -1,0 +1,10 @@
+2025-11-18 21:26:13,816 - INFO - Stylesheet loaded.
+2025-11-18 21:26:13,816 - INFO - Executing startup tasks...
+2025-11-18 21:26:13,816 - INFO - Startup sequence started.
+2025-11-18 21:26:14,109 - INFO - Failed to load SSL library: <class 'OSError'> (no library called "ssl" found)
+2025-11-18 21:26:14,110 - INFO - cryptg module not installed and libssl not found, falling back to (slower) Python encryption
+2025-11-18 21:26:14,174 - INFO - Startup sequence finished.
+2025-11-18 21:26:14,194 - INFO - Startup tasks completed.
+2025-11-18 21:26:14,194 - INFO - Creating MainWindow instance...
+2025-11-18 21:26:14,211 - INFO - MainWindow instance created.
+2025-11-18 21:26:14,286 - INFO - MainWindow.show() called. Starting Qt event loop.

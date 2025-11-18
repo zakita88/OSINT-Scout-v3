@@ -1,24 +1,57 @@
 # src/modules/telegram.py
 import os, asyncio
-from telethon import TelegramClient
+from telethon import TelegramClient, types
 from telethon.tl.types import UserStatusOnline, UserStatusOffline, UserStatusRecently, UserStatusLastWeek, UserStatusLastMonth
-from telethon.errors.rpcerrorlist import UsernameInvalidError, UsernameNotOccupiedError
+from telethon.errors.rpcerrorlist import UsernameInvalidError, UsernameNotOccupiedError, FloodWaitError
 from datetime import datetime
-from core.data_model import NormalizedData # Импортируем модель
+from core.data_model import NormalizedData
 
-# ... (код initialize, _ensure_connected, shutdown, _format_tg_status, scan без изменений) ...
-_client:TelegramClient|None=None;SESSION_NAME="tg_session"
+_client_cfg = {}
+SESSION_NAME = "tg_session"
+
 async def initialize(module_config:dict):
-    global _client;api_id=module_config.get("api_id");api_hash=module_config.get("api_hash")
-    if not api_id or not api_hash:print("[!] Telegram api_id/api_hash не найдены в config.json. Модуль отключен.");return
-    _client=TelegramClient(SESSION_NAME,api_id,api_hash);print("[*] Клиент Telegram инициализирован (не подключен).")
-async def _ensure_connected():
-    if _client and not _client.is_connected():
-        try:await _client.connect()
-        except Exception as e:print(f"[!] Не удалось подключиться к Telegram: {e}");return False
-    return _client and _client.is_connected()
-async def shutdown():
-    if _client and _client.is_connected():await _client.disconnect()
+    """Просто сохраняет конфигурацию."""
+    global _client_cfg
+    _client_cfg = { "api_id": module_config.get("api_id"), "api_hash": module_config.get("api_hash") }
+
+def get_client_config():
+    """Возвращает сохраненную конфигурацию для создания клиента."""
+    return _client_cfg
+
+async def scan(username: str, client: TelegramClient):
+    """
+    Выполняет запрос, используя предоставленный, уже подключенный клиент.
+    """
+    print(f"[TELEGRAM] Запрос для '{username}'")
+    if not (client and client.is_connected()):
+        return {"error": "Клиент Telegram не предоставлен или не подключен"}
+    
+    try:
+        entity = await client.get_entity(username)
+    except FloodWaitError as e:
+        # Если даже при таком подходе получаем FloodWait, просто пропускаем
+        print(f"[TELEGRAM FLOOD] Получен FloodWait для '{username}' на {e.seconds}с. Запрос отменен.")
+        return {"error": f"FloodWait ({e.seconds}с)"}
+    except (UsernameInvalidError, UsernameNotOccupiedError, ValueError):
+        return None
+    except Exception as e:
+        return {"error": str(e)}
+
+    if not isinstance(entity, types.User):
+        return None
+
+    info={"id":entity.id,"username":entity.username,"first_name":entity.first_name,"last_name":entity.last_name,"is_bot":entity.bot,"status_text":_format_tg_status(getattr(entity,'status',None)),"link":f"https://t.me/{entity.username}"if entity.username else None}
+    if getattr(entity, "photo", None):
+        try:
+            os.makedirs("cache", exist_ok=True)
+            path=f"cache/tg_{username}.jpg"
+            await client.download_profile_photo(entity, path)
+            info["photo"] = path
+        except Exception as e:
+            print(f"Ошибка загрузки фото Telegram: {e}")
+    return info
+
+# ... (остальной код модуля без изменений) ...
 def _format_tg_status(status)->str|None:
     if isinstance(status,UserStatusOnline):return f"Онлайн (до {status.expires.strftime('%H:%M')})"
     if isinstance(status,UserStatusOffline):return f"Был(а) в сети {status.was_online.strftime('%d.%m.%Y в %H:%M')}"
@@ -26,33 +59,9 @@ def _format_tg_status(status)->str|None:
     if isinstance(status,UserStatusLastWeek):return"Был(а) в сети на этой неделе"
     if isinstance(status,UserStatusLastMonth):return"Был(а) в сети в этом месяце"
     return None
-async def scan(username:str):
-    if not await _ensure_connected():return{"error":"Клиент Telegram не подключен"}
-    try:entity=await _client.get_entity(username)
-    except(UsernameInvalidError,UsernameNotOccupiedError,ValueError):return None
-    except Exception as e:return{"error":str(e)}
-    info={"id":entity.id,"username":entity.username,"first_name":entity.first_name,"last_name":entity.last_name,"is_bot":entity.bot,"status_text":_format_tg_status(getattr(entity,'status',None)),"link":f"https://t.me/{entity.username}"if entity.username else None}
-    if getattr(entity,"photo",None):
-        try:
-            os.makedirs("cache",exist_ok=True);path=f"cache/tg_{username}.jpg";await _client.download_profile_photo(entity,path)
-            if os.path.exists(path):info["photo"]=path
-        except Exception as e:print(f"Ошибка загрузки фото Telegram: {e}")
-    return info
-
 def format_result_for_gui(data: dict, username: str):
-    # АДАПТАЦИЯ К МОДЕЛИ
-    norm_data = NormalizedData.from_telegram_api(data)
-    details = {}
+    norm_data = NormalizedData.from_telegram_api(data); details = {};
     if profile_link := data.get("link"): details["Ссылка на профиль"] = profile_link
     if status := data.get("status_text"): details["Статус"] = status
-    details["ID"] = data.get("id")
-    details["Username"] = norm_data.username
-    details["Бот"] = "Да" if data.get("is_bot") else "Нет"
-
-    return {
-        "title": f"{norm_data.username} - Telegram",
-        "subtitle": f"{norm_data.first_name} {norm_data.last_name}".strip(),
-        "avatar_url": data.get("photo"),
-        "details": details,
-        "normalized_data": norm_data # Передаем модель в GUI
-    }
+    details["ID"] = data.get("id"); details["Username"] = norm_data.username; details["Бот"] = "Да" if data.get("is_bot") else "Нет"
+    return {"title": f"{norm_data.username} - Telegram", "subtitle": f"{norm_data.first_name} {norm_data.last_name}".strip(), "avatar_url": data.get("photo"), "details": details, "normalized_data": norm_data}

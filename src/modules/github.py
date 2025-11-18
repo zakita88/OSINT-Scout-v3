@@ -2,37 +2,44 @@
 import asyncio
 from core.http_client import HttpClient
 from datetime import datetime
-from core.data_model import NormalizedData # Импортируем модель
+from core.data_model import NormalizedData
 
-# ... (код initialize и scan без изменений) ...
 _token:str|None=None; _headers:dict={}
+
 async def initialize(module_config:dict):
     global _token,_headers; token_from_config=module_config.get("token")
     if isinstance(token_from_config,str) and token_from_config.strip():
         _token=token_from_config.strip(); _headers={"Authorization":f"Bearer {_token}"}; print("[*] Модуль GitHub будет использовать токен авторизации.")
     else: print("[!] Токен GitHub не найден или пуст. Запросы будут анонимными с низким лимитом.")
+
 async def scan(username:str):
+    print(f"[GITHUB] Запрос для '{username}'")
     url=f"https://api.github.com/users/{username}"; session=HttpClient.get_session()
     try:
         async with session.get(url,headers=_headers) as resp:
-            if resp.status==404:return None
-            if resp.status==401:print("[!] Ошибка авторизации GitHub. Проверьте ваш токен в config.json.");return{"error":"Ошибка авторизации GitHub (неверный токен?)"}
+            if resp.status==404: return None
+            if resp.status==401:
+                print(f"[GITHUB ERROR] Ошибка 401 для '{username}'. Неверный токен.")
+                return{"error":"Ошибка авторизации GitHub"}
             if resp.status!=200:
-                if resp.status==403:print("[!] Превышен лимит запросов к GitHub.");return{"error":"Превышен лимит запросов к GitHub"}
+                print(f"[GITHUB ERROR] HTTP {resp.status} для '{username}'")
+                if resp.status==403: return{"error":"Превышен лимит запросов GitHub"}
                 return{"error":f"GitHub HTTP {resp.status}"}
             return await resp.json()
-    except asyncio.TimeoutError:return{"error":"timeout"}
-    except Exception as e:return{"error":str(e)}
-
+    except asyncio.TimeoutError:
+        print(f"[GITHUB ERROR] Таймаут для '{username}'")
+        return{"error":"timeout"}
+    except Exception as e:
+        print(f"[GITHUB ERROR] Исключение для '{username}': {e}")
+        return{"error":str(e)}
+        
+# ... (остальной код модуля github.py без изменений) ...
 def _format_iso_date(date_str:str|None)->str:
     if not date_str:return""
     try: return datetime.fromisoformat(date_str.replace('Z','+00:00')).strftime('%d %B %Y')
     except(ValueError,TypeError):return""
-
 def format_result_for_gui(data: dict, username: str):
-    # АДАПТАЦИЯ К МОДЕЛИ
-    norm_data = NormalizedData.from_github_api(data)
-    details = {}
+    norm_data = NormalizedData.from_github_api(data); details = {}
     if profile_url := data.get("html_url"): details["Ссылка на профиль"] = profile_url
     if norm_data.company: details["Компания"] = norm_data.company
     if norm_data.city: details["Местоположение"] = norm_data.city
@@ -45,11 +52,4 @@ def format_result_for_gui(data: dict, username: str):
             else: details["Сайт"]=blog
     if twitter := data.get("twitter_username"): details["Twitter"] = f"https://twitter.com/{twitter}"
     if bio := data.get("bio"): details["Описание"] = bio
-
-    return {
-        "title": f"{norm_data.username} - GitHub",
-        "subtitle": f"{norm_data.first_name} {norm_data.last_name}".strip(),
-        "avatar_url": data.get("avatar_url"),
-        "details": details,
-        "normalized_data": norm_data # Передаем модель в GUI
-    }
+    return {"title": f"{norm_data.username} - GitHub", "subtitle": f"{norm_data.first_name} {norm_data.last_name}".strip(), "avatar_url": data.get("avatar_url"), "details": details, "normalized_data": norm_data}

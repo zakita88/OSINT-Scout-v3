@@ -33,6 +33,8 @@ class NormalizedData:
     username: str = ""
     first_name: str = ""
     last_name: str = ""
+    middle_name: str = "" # НОВОЕ ПОЛЕ
+    email: str = "" # НОВОЕ ПОЛЕ
     
     # Местоположение
     city: str = ""
@@ -49,14 +51,14 @@ class NormalizedData:
     # Служебные поля для поиска
     search_name: str = field(init=False, repr=False)
     search_location: str = field(init=False, repr=False)
+    search_email: str = field(init=False, repr=False)
 
     def __post_init__(self):
         """Вызывается после создания объекта для генерации поисковых полей."""
-        # Создаем единое поле для поиска по имени/нику
-        self.search_name = normalize_for_search(f"{self.username} {self.first_name} {self.last_name}")
-        # Создаем единое поле для поиска по местоположению
+        self.search_name = normalize_for_search(f"{self.username} {self.first_name} {self.last_name} {self.middle_name}")
         self.search_location = normalize_for_search(f"{self.city} {self.country} {self.company}")
-    
+        self.search_email = normalize_for_search(self.email) # Email и так обычно в латинице
+
     @classmethod
     def from_vk_api(cls, data: dict):
         """Фабричный метод для создания объекта из ответа VK API."""
@@ -81,13 +83,17 @@ class NormalizedData:
     def from_github_api(cls, data: dict):
         """Фабричный метод для создания объекта из ответа GitHub API."""
         name_parts = (data.get("name") or "").split()
-        first_name = name_parts[0] if name_parts else ""
-        last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
-        
+        first_name = name_parts[0] if len(name_parts) >= 1 else ""
+        last_name = name_parts[1] if len(name_parts) >= 2 else ""
+        # GitHub не предоставляет отчество, но мы можем предположить его, если есть 3 слова
+        middle_name = " ".join(name_parts[2:]) if len(name_parts) >= 3 else ""
+
         return cls(
             username=data.get("login", ""),
             first_name=first_name,
             last_name=last_name,
+            middle_name=middle_name,
+            email=data.get("email", ""),
             city=data.get("location", ""),
             company=data.get("company", "")
         )
