@@ -1,88 +1,144 @@
 # src/core/scanner.py
 import asyncio
-from telethon import TelegramClient
+import random
+from typing import List, Coroutine, Callable, Dict, Any
+
 from .module_loader import get_loaded_modules
 
-async def run_scan_session(usernames: list[str], result_callback, progress_callback):
-    modules = get_loaded_modules()
-    print(f"\n[SCANNER] Начинаем сессию сканирования для {len(usernames)} ников.")
-    
-    tg_client = None
-    telegram_module = modules.get("telegram")
-    if telegram_module:
-        cfg = telegram_module.get_client_config()
-        if cfg:
-            tg_client = TelegramClient(telegram_module.SESSION_NAME, cfg['api_id'], cfg['api_hash'])
-            print("[SCANNER] Создан новый клиент Telegram для этой сессии.")
-            await tg_client.connect()
-    
-    try:
-        tasks = []
-        
-        # --- ИЗМЕНЕНИЕ: Отделяем VK для пакетной обработки ---
-        vk_module = modules.get("vk")
-        if vk_module and hasattr(vk_module, 'scan_bulk'):
-            print("[SCANNER] Создаю пакетную задачу для VK...")
-            # Оборачиваем пакетную задачу, чтобы ее результат был совместим
-            task = asyncio.create_task(process_bulk_wrapper("vk", vk_module, usernames))
-            tasks.append(task)
-        
-        # --- Создаем одиночные задачи для ВСЕХ ОСТАЛЬНЫХ модулей ---
-        print("[SCANNER] Создаю одиночные задачи для Telegram и GitHub...")
-        for username in usernames:
-            for name, module in modules.items():
-                if name == "vk": # Пропускаем VK, так как он уже в пакетной задаче
-                    continue
-                
-                if name == "telegram" and tg_client:
-                    task = asyncio.create_task(scan_one_wrapper(username, name, module, client=tg_client))
-                elif name != "telegram": # Для всех остальных (GitHub)
-                    task = asyncio.create_task(scan_one_wrapper(username, name, module))
-                else:
-                    continue
-                tasks.append(task)
-        
-        print(f"[SCANNER] Всего создано задач: {len(tasks)}")
-            
-        for future in asyncio.as_completed(tasks):
+# Определяем стратегии для модулей
+STRATEGY_BULK = "bulk"
+STRATEGY_PARALLEL = "parallel"
+STRATEGY_SEQUENTIAL = "sequential"
+
+# Карта стратегий для известных модулей
+MODULE_STRATEGIES = {
+    "vk": STRATEGY_BULK,
+    "telegram": STRATEGY_SEQUENTIAL,
+    "github": STRATEGY_PARALLEL,
+}
+
+# --- Вспомогательные функции для каждой стратегии ---
+
+async def _process_bulk_modules(modules: dict, usernames: list[str], result_callback: Callable, progress_callback: Callable):
+    """Обрабатывает модули, поддерживающие пакетные запросы (VK)."""
+    tasks = []
+    for name, module in modules.items():
+        print(f"[*] Создание пакетной задачи для модуля '{name}'...")
+        task = asyncio.create_task(module.scan_bulk(usernames))
+        tasks.append((name, task))
+
+    for name, task in tasks:
+        try:
+            bulk_result = await task
+            for username, data in bulk_result.items():
+                if data and not data.get('error'):
+                    await result_callback({'username': username, name: data})
+        except Exception as e:
+            print(f"[SCANNER CRITICAL] Ошибка в пакетной задаче '{name}': {e}")
+        finally:
+            progress_callback() # Один вызов на весь модуль
+
+
+async def _process_parallel_modules(modules: dict, usernames: list[str], result_callback: Callable, progress_callback: Callable):
+    """Обрабатывает модули, допускающие параллельные запросы с ограничением (GitHub)."""
+    semaphore = asyncio.Semaphore(10) # Ограничение на 10 одновременных запросов
+    tasks = []
+
+    async def scan_with_semaphore(username, name, module):
+        async with semaphore:
             try:
-                results_list = await future
-                for result_item in results_list:
-                    await result_callback(result_item)
+                data = await asyncio.wait_for(module.scan(username), timeout=20.0)
+                if data and not data.get('error'):
+                    await result_callback({'username': username, name: data})
+            except asyncio.TimeoutError:
+                print(f"[{name.upper()}] Таймаут для '{username}'")
             except Exception as e:
-                print(f"[SCANNER CRITICAL] Ошибка при обработке Future: {e}")
+                print(f"[{name.upper()}] Исключение для '{username}': {e}")
             finally:
                 progress_callback()
-            
-    finally:
-        if tg_client and tg_client.is_connected():
-            print("[SCANNER] Завершаю сессию клиента Telegram...")
-            await tg_client.disconnect()
 
-async def process_bulk_wrapper(module_name, module, usernames):
-    """Обертка для пакетной задачи, чтобы ее результат был совместим."""
-    bulk_result = await module.scan_bulk(usernames)
-    results_list = []
-    for username, data in bulk_result.items():
-        if data and not data.get('error'):
-            results_list.append({'username': username, module_name: data})
-    return results_list
+    for name, module in modules.items():
+        for username in usernames:
+            task = asyncio.create_task(scan_with_semaphore(username, name, module))
+            tasks.append(task)
+    
+    if tasks:
+        await asyncio.gather(*tasks)
 
-async def scan_one_wrapper(username: str, module_name: str, module, client=None):
-    """Обертка для одиночной задачи, которая может принимать доп. клиент."""
+
+async def _process_sequential_modules(modules: dict, usernames: list[str], result_callback: Callable, progress_callback: Callable):
+    """Обрабатывает модули, требующие последовательных запросов с задержкой (Telegram)."""
+    queue = asyncio.Queue()
+    for name, module in modules.items():
+        for username in usernames:
+            await queue.put((username, name, module))
+
+    if queue.empty():
+        return
+
+    # Запускаем одного медленного исполнителя (worker)
+    async def worker():
+        while not queue.empty():
+            username, name, module = await queue.get()
+            try:
+                data = await asyncio.wait_for(module.scan(username), timeout=60.0)
+                if data and not data.get('error'):
+                    await result_callback({'username': username, name: data})
+            except asyncio.TimeoutError:
+                print(f"[{name.upper()}] Таймаут для '{username}'")
+            except Exception as e:
+                print(f"[{name.upper()}] Исключение для '{username}': {e}")
+            finally:
+                progress_callback()
+                queue.task_done()
+                # ИЗМЕНЕНИЕ: Уменьшена базовая задержка для быстрой работы
+                base_delay = 1.0  # Устанавливаем базовую паузу в 1 секунду
+                jitter = random.uniform(0.5, 1.2) # Добавляем небольшую случайность
+                total_delay = base_delay + jitter
+                # Убираем лог паузы, чтобы не засорять вывод
+                await asyncio.sleep(total_delay)
+    
+    worker_task = asyncio.create_task(worker())
+    await queue.join()
+    worker_task.cancel()
     try:
-        if module_name == "telegram" and client:
-            data = await asyncio.wait_for(module.scan(username, client=client), timeout=20.0)
-        else:
-            # Для GitHub и других будущих одиночных модулей
-            data = await asyncio.wait_for(module.scan(username), timeout=20.0)
+        await worker_task
+    except asyncio.CancelledError:
+        pass
 
-        if data and not data.get('error'):
-            return [{'username': username, module_name: data}]
-        return []
-    except asyncio.TimeoutError:
-        print(f"[{module_name.upper()}] Таймаут для '{username}'")
-        return []
-    except Exception as e:
-        print(f"[{module_name.upper()}] Исключение для '{username}': {e}")
-        return []
+
+async def run_scan_session(usernames: List[str], result_callback: Callable[[Dict[str, Any]], Coroutine], progress_callback: Callable[[], None]):
+    """
+    Основная функция сканирования, управляющая различными стратегиями.
+    """
+    all_modules = get_loaded_modules()
+    if not all_modules:
+        print("[SCANNER] Нет загруженных модулей для сканирования.")
+        return
+
+    bulk_modules = {}
+    parallel_modules = {}
+    sequential_modules = {}
+
+    for name, module in all_modules.items():
+        strategy = MODULE_STRATEGIES.get(name, STRATEGY_PARALLEL)
+        if strategy == STRATEGY_BULK and hasattr(module, 'scan_bulk'):
+            bulk_modules[name] = module
+        elif strategy == STRATEGY_SEQUENTIAL and hasattr(module, 'scan'):
+            sequential_modules[name] = module
+        elif hasattr(module, 'scan'):
+            parallel_modules[name] = module
+
+    print(f"\n[SCANNER] Начинаем сессию сканирования для {len(usernames)} ников.")
+    print(f"[SCANNER] Стратегии: Пакетные({len(bulk_modules)}), Параллельные({len(parallel_modules)}), Последовательные({len(sequential_modules)})")
+
+    main_tasks = []
+    if bulk_modules:
+        main_tasks.append(_process_bulk_modules(bulk_modules, usernames, result_callback, progress_callback))
+    if parallel_modules:
+        main_tasks.append(_process_parallel_modules(parallel_modules, usernames, result_callback, progress_callback))
+    if sequential_modules:
+        main_tasks.append(_process_sequential_modules(sequential_modules, usernames, result_callback, progress_callback))
+
+    if main_tasks:
+        await asyncio.gather(*main_tasks)

@@ -16,10 +16,11 @@ async def startup():
 
 async def cleanup():
     """Асинхронные задачи для корректного завершения."""
-    print("[*] Начало процесса завершения...")
+    print("\n[*] Начало процесса завершения...")
     await shutdown_modules()
     await HttpClient.close()
     print("[*] Все системы выгружены. Выход.")
+
 
 if __name__ == "__main__":
     if sys.platform == "win32":
@@ -32,13 +33,14 @@ if __name__ == "__main__":
     qss_path = Path(__file__).resolve().parent / "gui" / "theme.qss"
     if qss_path.exists():
         app.setStyleSheet(qss_path.read_text(encoding="utf-8"))
-    
+
     main_window = None
     try:
         loop.run_until_complete(startup())
+
         main_window = MainWindow()
         main_window.show()
-        
+
         with loop:
             loop.run_forever()
 

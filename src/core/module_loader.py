@@ -17,7 +17,7 @@ async def load_modules():
     Находит, импортирует и инициализирует все включенные в конфиге модули.
     """
     if _loaded_modules:
-        return  # Предотвращаем повторную загрузку
+        return # Предотвращаем повторную загрузку
 
     config = get_config()
     modules_config = config.get("modules", {})
@@ -35,14 +35,19 @@ async def load_modules():
             except Exception as e:
                 print(f"[!] Ошибка инициализации модуля '{name}': {e}")
 
+
 def get_loaded_modules():
     """Возвращает словарь с загруженными модулями."""
     return _loaded_modules
 
 async def shutdown_modules():
     """Корректно выгружает все модули, вызывая их функции shutdown."""
-    for module in _loaded_modules.values():
+    for name, module in _loaded_modules.items():
         if hasattr(module, "shutdown"):
-            await module.shutdown()
+            try:
+                await module.shutdown()
+                print(f"[*] Модуль '{name}' корректно остановлен.")
+            except Exception as e:
+                print(f"[!] Ошибка при остановке модуля '{name}': {e}")
     _loaded_modules.clear()
     print("[*] Все модули выгружены.")
